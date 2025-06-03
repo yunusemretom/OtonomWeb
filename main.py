@@ -134,6 +134,7 @@ time.sleep(5)
 mesaj = wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "alert"))).text
 if "Üzgünüz" in mesaj:
     print("Randevu bulunamadı.")
+    exit()
     
 else:
     print("Randevu bulundu:", mesaj)
