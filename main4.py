@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
+from bs4 import BeautifulSoup
 
 import undetected_chromedriver as uc
 from selenium import webdriver
@@ -50,6 +51,13 @@ class UserInfo:
     passport_number: str = ""
     passport_expiry: str = ""
     reference_number: str = ""
+    # Visa search settings
+    visa_status: str = "open"
+    visa_location: str = "Istanbul Beyoglu"
+    visa_category: str = "Short Term"
+    visa_type: str = "Short Term Standard"
+    check_interval: int = 30  # seconds
+    wait_time: int = 180  # seconds
 
     @classmethod
     def load_from_file(cls):
@@ -84,7 +92,14 @@ class UserInfo:
                 "nationality": self.nationality,
                 "passport_number": self.passport_number,
                 "passport_expiry": self.passport_expiry,
-                "reference_number": self.reference_number
+                "reference_number": self.reference_number,
+                # Visa search settings
+                "visa_status": self.visa_status,
+                "visa_location": self.visa_location,
+                "visa_category": self.visa_category,
+                "visa_type": self.visa_type,
+                "check_interval": self.check_interval,
+                "wait_time": self.wait_time
             }
             
             with open("user_info.json", "w", encoding="utf-8") as f:
@@ -123,9 +138,94 @@ class VisaBookingWorker(QThread):
         self.input_event = None
         self.wait_time = 180  # Default wait time
 
+    def check_visa_availability(self) -> bool:
+        """Check if visa appointments are available"""
+        try:
+            self.log_message.emit("Vize randevu durumu kontrol ediliyor...")
+            self.status_changed.emit("Randevu durumu kontrol ediliyor")
+            
+            # Visasbot.com'dan kontrol et
+            url = "https://www.visasbot.com/#origin=tur&dest=fra"
+            self.driver.get(url)
+            time.sleep(5)  # Sayfanın yüklenmesi için bekle
+            
+            # Visa kartlarının yüklenmesini bekle
+            try:
+                self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "visa-card-container")))
+            except TimeoutException:
+                self.log_message.emit("Visa kartları yüklenemedi")
+                return False
+            
+            # Sayfa kaynağını al ve parse et
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Visa kartlarını bul
+            visa_cards = soup.find_all('div', class_='visa-card-container')
+            
+            # İstenen kriterlere göre filtrele
+            for card in visa_cards:
+                # Durum kontrolü
+                status = card.select_one('.status-text')
+                if not status or self.user_info.visa_status.lower() not in status.text.lower():
+                    continue
+                
+                # Konum kontrolü
+                country_mission = card.select_one('.country-mission-row')
+                if not country_mission or self.user_info.visa_location.lower() not in country_mission.text.lower():
+                    continue
+                
+                # Kategori kontrolü
+                details = card.select('.visa-details .line')
+                category_match = False
+                type_match = False
+                
+                for detail in details:
+                    text = detail.get_text(strip=True).lower()
+                    if 'category' in text and self.user_info.visa_category.lower() in text:
+                        category_match = True
+                    if 'type' in text and self.user_info.visa_type.lower() in text:
+                        type_match = True
+                
+                if category_match and type_match:
+                    self.log_message.emit("Uygun randevu bulundu!")
+                    return True
+            
+            self.log_message.emit("Uygun randevu bulunamadı")
+            return False
+            
+        except Exception as e:
+            self.log_message.emit(f"Randevu kontrolü sırasında hata: {str(e)}")
+            return False
+
+    def wait_for_available_appointment(self):
+        """Sürekli olarak randevu kontrolü yap"""
+        check_interval = self.user_info.check_interval
+        
+        while self.is_running:
+            if self.check_visa_availability():
+                self.log_message.emit("Randevu bulundu! İşleme devam ediliyor...")
+                return True
+                
+            self.log_message.emit(f"{check_interval} saniye sonra tekrar kontrol edilecek...")
+            
+            # Belirtilen süre kadar bekle
+            for _ in range(check_interval):
+                if not self.is_running:
+                    return False
+                time.sleep(1)
+        
+        return False
+
     def run(self):
         try:
             self.setup_driver()
+            
+            # Randevu bulunana kadar bekle
+            if not self.wait_for_available_appointment():
+                self.log_message.emit("İşlem kullanıcı tarafından durduruldu")
+                return
+                
             self.login_process()
             self.booking_process()
             self.status_changed.emit(BookingStatus.COMPLETED.value)
@@ -802,10 +902,29 @@ class ModernVisaBookingApp(QMainWindow):
         settings_tab = QWidget()
         settings_layout = QFormLayout(settings_tab)
         
+        # Visa search settings
+        self.visa_status_input = QLineEdit()
+        self.visa_status_input.setPlaceholderText("open")
+        settings_layout.addRow("Vize Durumu:", self.visa_status_input)
+        
+        self.visa_location_input = QLineEdit()
+        self.visa_location_input.setPlaceholderText("Istanbul Beyoglu")
+        settings_layout.addRow("Vize Konumu:", self.visa_location_input)
+        
+        self.visa_category_input = QLineEdit()
+        self.visa_category_input.setPlaceholderText("Short Term")
+        settings_layout.addRow("Vize Kategorisi:", self.visa_category_input)
+        
+        self.visa_type_input = QLineEdit()
+        self.visa_type_input.setPlaceholderText("Short Term Standard")
+        settings_layout.addRow("Vize Tipi:", self.visa_type_input)
+        
+        self.check_interval_input = QLineEdit()
+        self.check_interval_input.setPlaceholderText("30")
+        settings_layout.addRow("Kontrol Aralığı (saniye):", self.check_interval_input)
+        
         self.wait_time_input = QLineEdit()
         self.wait_time_input.setPlaceholderText("180")
-        self.wait_time_input.setText(str(self.wait_time))
-        self.wait_time_input.textChanged.connect(self.update_wait_time)
         settings_layout.addRow("Bekleme Süresi (saniye):", self.wait_time_input)
         
         tab_widget.addTab(settings_tab, "Ayarlar")
@@ -1047,6 +1166,20 @@ class ModernVisaBookingApp(QMainWindow):
         self.user_info.passport_expiry = self.user_info.format_date(self.passport_expiry_input.text())
         self.user_info.reference_number = self.reference_input.text()
         
+        # Visa search settings
+        self.user_info.visa_status = self.visa_status_input.text() or "open"
+        self.user_info.visa_location = self.visa_location_input.text() or "Istanbul Beyoglu"
+        self.user_info.visa_category = self.visa_category_input.text() or "Short Term"
+        self.user_info.visa_type = self.visa_type_input.text() or "Short Term Standard"
+        try:
+            self.user_info.check_interval = int(self.check_interval_input.text() or "30")
+        except ValueError:
+            self.user_info.check_interval = 30
+        try:
+            self.user_info.wait_time = int(self.wait_time_input.text() or "180")
+        except ValueError:
+            self.user_info.wait_time = 180
+        
         # Save the information after collecting
         if self.user_info.save_to_file():
             self.add_log("Bilgiler başarıyla kaydedildi")
@@ -1129,6 +1262,14 @@ class ModernVisaBookingApp(QMainWindow):
         self.passport_number_input.setText(self.user_info.passport_number)
         self.passport_expiry_input.setText(self.user_info.passport_expiry)
         self.reference_input.setText(self.user_info.reference_number)
+        
+        # Load visa search settings
+        self.visa_status_input.setText(self.user_info.visa_status)
+        self.visa_location_input.setText(self.user_info.visa_location)
+        self.visa_category_input.setText(self.user_info.visa_category)
+        self.visa_type_input.setText(self.user_info.visa_type)
+        self.check_interval_input.setText(str(self.user_info.check_interval))
+        self.wait_time_input.setText(str(self.user_info.wait_time))
 
 
 def main():
