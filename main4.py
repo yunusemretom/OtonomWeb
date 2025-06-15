@@ -121,6 +121,7 @@ class VisaBookingWorker(QThread):
         self.is_running = True
         self.user_input = ""
         self.input_event = None
+        self.wait_time = 180  # Default wait time
 
     def run(self):
         try:
@@ -262,6 +263,8 @@ class VisaBookingWorker(QThread):
                 self.error_occurred.emit("Randevu bulunamadı!")
                 self.play_queue_notification()
                 self.booking_process()
+                self.log_message.emit(f"{self.wait_time} saniye bekleniyor...")
+                time.sleep(self.wait_time)
                 return False
             else:
                 self.log_message.emit(f"Randevu bulundu: {mesaj}")
@@ -284,11 +287,14 @@ class VisaBookingWorker(QThread):
             istanbul_option.click()
             time.sleep(3) # Allow time for options to load
         except:  
-            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-0")))
-            center_select.click()
-            istanbul_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='IBY']")))
-            istanbul_option.click()
-            time.sleep(3) 
+            try:
+                center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-0")))
+                center_select.click()
+                istanbul_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='IBY']")))
+                istanbul_option.click()
+                time.sleep(3) 
+            except:
+                self.booking_process()
         # Service selection
         try:
             center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-4")))
@@ -298,11 +304,15 @@ class VisaBookingWorker(QThread):
             time.sleep(3)  # Allow time for options to load
 
         except:
-            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-4")))
-            center_select.click()
-            service_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SSV']")))
-            service_option.click()
-            time.sleep(3)  # Allow time for options to load
+            try:
+                center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-4")))
+                center_select.click()
+                service_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SSV']")))
+                service_option.click()
+                time.sleep(3)  # Allow time for options to load
+            except:
+                self.booking_process()
+
         # Duration selection
         try:
             center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-2")))
@@ -311,11 +321,14 @@ class VisaBookingWorker(QThread):
             duration_option.click()
             time.sleep(3)  # Allow time for options to load
         except:
-            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-2")))
-            center_select.click()
-            duration_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SHORSTD']")))
-            duration_option.click()
-            time.sleep(3)
+            try:
+                center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-2")))
+                center_select.click()
+                duration_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SHORSTD']")))
+                duration_option.click()
+                time.sleep(3)
+            except:
+                self.booking_process()
 
 
     def continue_booking(self):
@@ -345,40 +358,131 @@ class VisaBookingWorker(QThread):
             # Reference number
             ref_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Referans numaranızı giriniz']")))
             ref_input.send_keys(self.user_info.reference_number)
-        except TimeoutException:
-            pass
+        except:
+            try:
+                time.sleep(1)
+                ref_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Referans numaranızı giriniz']")))
+                ref_input.send_keys(self.user_info.reference_number)
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
         # Name and surname
-        name_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='İsminizi Giriniz']")))
-        name_input.send_keys(self.user_info.first_name)
+        try:
+            name_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='İsminizi Giriniz']")))
+            name_input.send_keys(self.user_info.first_name)
+        except:
+            try:
+                time.sleep(1)
+                name_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='İsminizi Giriniz']")))
+                name_input.send_keys(self.user_info.first_name)
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
-        surname_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Lütfen soy isminizi giriniz.']")))
-        surname_input.send_keys(self.user_info.last_name)
+        try:
+            surname_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Lütfen soy isminizi giriniz.']")))
+            surname_input.send_keys(self.user_info.last_name)
+        except:
+            try:
+                time.sleep(1)
+                surname_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='Lütfen soy isminizi giriniz.']")))
+                surname_input.send_keys(self.user_info.last_name)
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
         # Gender
-        gender_select = self.wait.until(EC.element_to_be_clickable((By.XPATH, "(//mat-select)[1]")))
-        gender_select.click()
-        time.sleep(3)
-        gender_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[@class='mdc-list-item__primary-text' and contains(text(), '{self.user_info.gender}')]")))
-        gender_option.click()
+        try:
+            gender_select = self.wait.until(EC.element_to_be_clickable((By.XPATH, "(//mat-select)[1]")))
+            gender_select.click()
+            time.sleep(1)
+            gender_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[@class='mdc-list-item__primary-text' and contains(text(), '{self.user_info.gender}')]")))
+            gender_option.click()
+        except:
+            try:
+                time.sleep(1)
+                gender_select = self.wait.until(EC.element_to_be_clickable((By.XPATH, "(//mat-select)[1]")))
+                gender_select.click()
+                time.sleep(1)
+                gender_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[@class='mdc-list-item__primary-text' and contains(text(), '{self.user_info.gender}')]")))
+                gender_option.click()
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
         # Birth date
-        birth_input = self.wait.until(EC.element_to_be_clickable((By.ID, "dateOfBirth")))
-        birth_input.send_keys(self.user_info.birth_date)
+        try:
+            birth_input = self.wait.until(EC.element_to_be_clickable((By.ID, "dateOfBirth")))
+            birth_input.send_keys(self.user_info.birth_date)
+        except:
+            try:
+                time.sleep(1)
+                birth_input = self.wait.until(EC.element_to_be_clickable((By.ID, "dateOfBirth")))
+                birth_input.send_keys(self.user_info.birth_date)
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
         # Nationality
-        nationality_select = self.wait.until(EC.element_to_be_clickable((By.XPATH, "(//mat-select)[2]")))
-        nationality_select.click()
-        time.sleep(3)
-        nationality_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[@class='mdc-list-item__primary-text' and contains(text(), '{self.user_info.nationality}')]")))
-        nationality_option.click()
+        try:
+            nationality_select = self.wait.until(EC.element_to_be_clickable((By.XPATH, "(//mat-select)[2]")))
+            nationality_select.click()
+            time.sleep(1)
+            nationality_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[@class='mdc-list-item__primary-text' and contains(text(), '{self.user_info.nationality}')]")))
+            nationality_option.click()
+        except:
+            try:
+                time.sleep(1)
+                nationality_select = self.wait.until(EC.element_to_be_clickable((By.XPATH, "(//mat-select)[2]")))
+                nationality_select.click()
+                time.sleep(1)
+                nationality_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[@class='mdc-list-item__primary-text' and contains(text(), '{self.user_info.nationality}')]")))
+                nationality_option.click()
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
         # Passport information
-        passport_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='pasaport Numarası Giriniz']")))
-        passport_input.send_keys(self.user_info.passport_number)
+        try:
+            passport_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='pasaport Numarası Giriniz']")))
+            passport_input.send_keys(self.user_info.passport_number)
+        except:
+            try:
+                time.sleep(1)
+                passport_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='pasaport Numarası Giriniz']")))
+                passport_input.send_keys(self.user_info.passport_number)
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
-        expiry_input = self.wait.until(EC.element_to_be_clickable((By.ID, "passportExpirtyDate")))
-        expiry_input.send_keys(self.user_info.passport_expiry)
+        try:
+            expiry_input = self.wait.until(EC.element_to_be_clickable((By.ID, "passportExpirtyDate")))
+            expiry_input.send_keys(self.user_info.passport_expiry)
+        except:
+            try:
+                time.sleep(1)
+                expiry_input = self.wait.until(EC.element_to_be_clickable((By.ID, "passportExpirtyDate")))
+                expiry_input.send_keys(self.user_info.passport_expiry)
+            except:
+                self.driver.refresh()
+                self.fill_personal_info()
+                return
+
         time.sleep(3)
         self.log_message.emit("Kişisel bilgiler başarıyla dolduruldu")
 
@@ -536,13 +640,14 @@ class VisaBookingWorker(QThread):
     def cleanup(self):
         """Clean up resources"""
         if self.driver:
-            self.driver.quit()
-            self.log_message.emit("Tarayıcı kapatıldı")
+            # self.driver.quit()  # Tarayıcıyı kapatmayı engelliyoruz
+            self.log_message.emit("Tarayıcı oturumu korunuyor")
 
     def stop(self):
         """Stop the worker"""
         self.is_running = False
-        self.terminate()
+        # self.terminate()  # Thread'i sonlandırmayı engelliyoruz
+        self.log_message.emit("İşlem durduruldu, tarayıcı oturumu korunuyor")
 
     def play_queue_notification(self):
         """Sıra bittiğinde sesli uyarı çalar"""
@@ -593,6 +698,7 @@ class ModernVisaBookingApp(QMainWindow):
         super().__init__()
         self.user_info = UserInfo.load_from_file()  # Load saved information when starting
         self.worker = None
+        self.wait_time = 180  # Default wait time in seconds
         self.setup_ui()
         self.setup_style()
         self.load_saved_info()  # Load saved information into UI
@@ -691,6 +797,18 @@ class ModernVisaBookingApp(QMainWindow):
         passport_layout.addRow("Referans No:", self.reference_input)
         
         tab_widget.addTab(passport_tab, "Pasaport Bilgileri")
+
+        # Settings tab
+        settings_tab = QWidget()
+        settings_layout = QFormLayout(settings_tab)
+        
+        self.wait_time_input = QLineEdit()
+        self.wait_time_input.setPlaceholderText("180")
+        self.wait_time_input.setText(str(self.wait_time))
+        self.wait_time_input.textChanged.connect(self.update_wait_time)
+        settings_layout.addRow("Bekleme Süresi (saniye):", self.wait_time_input)
+        
+        tab_widget.addTab(settings_tab, "Ayarlar")
 
         layout.addWidget(tab_widget)
 
@@ -864,6 +982,16 @@ class ModernVisaBookingApp(QMainWindow):
             }
         """)
 
+    def update_wait_time(self):
+        """Update wait time from input"""
+        try:
+            new_wait_time = int(self.wait_time_input.text())
+            if new_wait_time > 0:
+                self.wait_time = new_wait_time
+                self.add_log(f"Bekleme süresi {self.wait_time} saniye olarak güncellendi")
+        except ValueError:
+            self.wait_time_input.setText(str(self.wait_time))
+
     def start_booking(self):
         """Start the booking process"""
         # Validate inputs
@@ -875,6 +1003,7 @@ class ModernVisaBookingApp(QMainWindow):
 
         # Create and start worker
         self.worker = VisaBookingWorker(self.user_info)
+        self.worker.wait_time = self.wait_time  # Set wait time
         self.worker.status_changed.connect(self.update_status)
         self.worker.progress_changed.connect(self.update_progress)
         self.worker.log_message.connect(self.add_log)
