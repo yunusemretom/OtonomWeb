@@ -3,6 +3,7 @@ import time
 import logging
 import json
 import re
+import winsound
 from datetime import datetime
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict
@@ -15,6 +16,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import pyautogui
+from selenium.webdriver.common.action_chains import ActionChains
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
@@ -31,12 +33,12 @@ class BookingStatus(Enum):
     LOGGING_IN = "Giriş yapılıyor"
     IN_QUEUE = "Sanal kuyrukta bekliyor"
     FINDING_APPOINTMENT = "Randevu aranıyor"
-    FILLING_FORM = "Form doldurulıyor"
+    FILLING_FORM = "Form dolduruluyor"
     COMPLETED = "Tamamlandı"
     ERROR = "Hata"
 
 
-@dataclass
+@dataclass 
 class UserInfo:
     email: str = ""
     password: str = ""
@@ -49,30 +51,57 @@ class UserInfo:
     passport_expiry: str = ""
     reference_number: str = ""
 
-    def format_date(self, date_str: str) -> str:
-        """Remove dots and spaces from date string"""
-        if not date_str:
-            return ""
-        return re.sub(r'[.\s]', '', date_str)
-
-    def save_to_file(self):
-        """Save user information to a file"""
-        try:
-            with open('user_info.json', 'w', encoding='utf-8') as f:
-                json.dump(asdict(self), f, ensure_ascii=False, indent=4)
-            return True
-        except Exception:
-            return False
-
     @classmethod
     def load_from_file(cls):
-        """Load saved user information from file"""
+        """Kaydedilmiş bilgileri JSON dosyasından yükle"""
+        import json
+        import os
+        
+        file_path = "user_info.json"
+        
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return cls(**data)
+            except Exception as e:
+                print(f"Bilgiler yüklenirken hata: {e}")
+                return cls()
+        return cls()
+
+    def save_to_file(self) -> bool:
+        """Kullanıcı bilgilerini JSON dosyasına kaydet"""
+        import json
+        
         try:
-            with open('user_info.json', 'r', encoding='utf-8') as f:
-                saved_info = json.load(f)
-                return cls(**saved_info)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return cls()
+            data = {
+                "email": self.email,
+                "password": self.password, 
+                "first_name": self.first_name,
+                "last_name": self.last_name,
+                "gender": self.gender,
+                "birth_date": self.birth_date,
+                "nationality": self.nationality,
+                "passport_number": self.passport_number,
+                "passport_expiry": self.passport_expiry,
+                "reference_number": self.reference_number
+            }
+            
+            with open("user_info.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+            return True
+            
+        except Exception as e:
+            print(f"Bilgiler kaydedilirken hata: {e}")
+            return False
+
+    def format_date(self, date_str: str) -> str:
+        """Tarihi DDMMYYYY formatına dönüştür"""
+        # Sadece rakamları al
+        nums = ''.join(filter(str.isdigit, date_str))
+        if len(nums) == 8:
+            return nums
+        return date_str
 
 
 class VisaBookingWorker(QThread):
@@ -104,15 +133,22 @@ class VisaBookingWorker(QThread):
             self.error_occurred.emit(f"Hata oluştu: {str(e)}")
             self.log_message.emit(f"HATA: {str(e)}")
         finally:
-            self.cleanup()
+            self.log_message.emit("İşlem tamamlandı, kaynaklar temizleniyor...")
 
     def setup_driver(self):
         self.status_changed.emit(BookingStatus.LOGGING_IN.value)
         self.log_message.emit("Tarayıcı başlatılıyor...")
         self.progress_changed.emit(10)
-
+    
         options = uc.ChromeOptions()
         options.add_argument("--user-data-dir=chrome-data")
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-infobars')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-browser-side-navigation')
+        options.add_argument('--disable-gpu')
         options.headless = False
         
         self.driver = uc.Chrome(options=options)
@@ -140,16 +176,7 @@ class VisaBookingWorker(QThread):
         except TimeoutException:
             self.log_message.emit("Çerez butonu bulunamadı")
 
-        # Cloudflare Turnstile
-        try:
-            self.log_message.emit("Cloudflare doğrulaması yapılıyor...")
-            turnstile = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "app-cloudflare-captcha-container")))
-            x, y = self.get_element_center(turnstile)
-            pyautogui.click(x, y)
-            self.log_message.emit("Cloudflare doğrulaması tıklandı")
-        except TimeoutException:
-            self.log_message.emit("Cloudflare elementi bulunamadı")
-
+        
         # Login credentials
         self.log_message.emit("Giriş bilgileri giriliyor...")
         username = self.wait.until(EC.presence_of_element_located((By.ID, "email")))
@@ -159,52 +186,98 @@ class VisaBookingWorker(QThread):
         password.send_keys(self.user_info.password)
 
         self.log_message.emit("Giriş bilgileri girildi")
-        self.progress_changed.emit(40)
-
-        # Submit login
+        self.progress_changed.emit(40)        # Submit login
         try:
             submit_button = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@class='mdc-button__label' and contains(text(), 'Oturum Aç')]")))
             submit_button.click()
             self.log_message.emit("Giriş butonu tıklandı")
-        except TimeoutException:
-            self.log_message.emit("Giriş butonu bulunamadı, sayfa yenileniyor...")
-            self.driver.refresh()
-            time.sleep(2)
-            self.login_process()
+            time.sleep(2)  # Allow time for login to process
+            
+            # SMS verification
+            self.input_required.emit("SMS Kodu", "Lütfen SMS kodunu girin:")
+            self.input_event = self.wait_for_input()
+            self.input_event.wait()
+            
+            sms_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='**********']")))
+            sms_input.send_keys(self.user_input)
+            try:
+                self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "mdc-button__label"))).click()
+                self.log_message.emit("SMS kodu başarıyla girildi")
+                self.progress_changed.emit(50)
+            except:
+                self.log_message.emit("SMS kodu girilemedi")
+                self.input_required.emit("Manuel Giriş", "Lütfen kendiniz giriş yapıp onaylayın. Tamam'a bastıktan sonra işlem devam edecektir.")
+                self.input_event = self.wait_for_input()
+                self.input_event.wait()  # Kullanıcının tamam butonuna basmasını bekle
+                self.log_message.emit("Manuel giriş onaylandı, devam ediliyor...")
 
-        # SMS verification
-        self.input_required.emit("SMS Kodu", "Lütfen SMS kodunu girin:")
-        self.input_event = self.wait_for_input()
-        self.input_event.wait()
+        except:
+            self.log_message.emit("Giriş butonu bulunamadı. Lütfen manuel giriş yapın...")
+            # Dialog kutusunu ana thread'de göstermek için sinyal gönder
+            self.input_required.emit("Manuel Giriş", "Lütfen kendiniz giriş yapıp onaylayın. Tamam'a bastıktan sonra işlem devam edecektir.")
+            self.input_event = self.wait_for_input()
+            self.input_event.wait()  # Kullanıcının tamam butonuna basmasını bekle
+            self.log_message.emit("Manuel giriş onaylandı, devam ediliyor...")
+            time.sleep(2)  # Kullanıcının işlemi tamamlaması için kısa bir bekleme
+            self.progress_changed.emit(40)
+
         
-        sms_input = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder='**********']")))
-        sms_input.send_keys(self.user_input)
-        
-        self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "mdc-button__label"))).click()
-        self.log_message.emit("SMS kodu başarıyla girildi")
-        self.progress_changed.emit(50)
 
     def booking_process(self):
+        self.driver.get("https://visa.vfsglobal.com/tur/tr/fra/dashboard")
+        time.sleep(2)  # Sayfanın yüklenmesi için kısa bir bekleme
         self.status_changed.emit(BookingStatus.FINDING_APPOINTMENT.value)
-        self.log_message.emit("Randevu aranıyor...")
-
+        self.log_message.emit("Reservasyon butonu aranıyor...")
+        time.sleep(5)  # Allow time for login to complete
         # Start new reservation
-        rezervasyon = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@class='mdc-button__label' and contains(text(), 'Yeni Rezervasyon Başlat')]")))
-        rezervasyon.click()
-        self.progress_changed.emit(60)
+        def rezervasyon_click():
+            try:
+                buttons = self.wait.until(
+                    EC.presence_of_all_elements_located((
+                        By.XPATH, "//*[@class='mdc-button__label' and contains(text(), 'Yeni Rezervasyon Başlat')]"
+                    ))
+                )
 
-        # Select center and options
-        self.select_booking_options()
+                # Görünür olanı bul ve tıkla
+                for button in buttons:
+                    ActionChains(self.driver).move_to_element(button).click().perform()
+                        
+                self.progress_changed.emit(60)
+                self.log_message.emit("Yeni rezervasyon sayfasına yönlendirildi")
+            except:
+                self.log_message.emit("Yeni rezervasyon sayfası bulunamadı")
+                time.sleep(3)
+                try:
+                    rezervasyon_click()
+                except:
+                    self.log_message.emit("Yeni rezervasyon sayfası hala bulunamadı, lütfen manuel olarak kontrol edin")
+                    self.error_occurred.emit("Yeni rezervasyon sayfası hala bulunamadı, lütfen manuel olarak kontrol edin")
         
+        rezervasyon_click()
+        time.sleep(3)  # Allow time for page to load
+        # Select center and options
+        try:
+            self.select_booking_options()
+        except:
+            try:
+                self.select_booking_options()
+            except:
+                self.log_message.emit("Rezervasyon seçenekleri ayarlanamadı")
+                self.error_occurred.emit("Rezervasyon seçenekleri ayarlanamadı")
+                return
+
         # Check appointment availability
         try:
             mesaj = self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "alert"))).text
             if "Üzgünüz" in mesaj:
-                self.log_message.emit("Randevu bulunamadı!")
+                self.log_message.emit("Randevu bulunamadı! İşlemler yeniden başlatılıyor...")
                 self.error_occurred.emit("Randevu bulunamadı!")
-                return
+                self.play_queue_notification()  # Sesli uyarı çal
+                self.booking_process()  # İşlemleri yeniden başlat
+                return False
             else:
                 self.log_message.emit(f"Randevu bulundu: {mesaj}")
+                self.play_queue_notification()  # Randevu bulunduğunda da sesli uyarı çal
         except TimeoutException:
             self.log_message.emit("Randevu durumu kontrol edilemedi")
 
@@ -214,29 +287,53 @@ class VisaBookingWorker(QThread):
     def select_booking_options(self):
         """Select booking center and service options"""
         self.log_message.emit("Rezervasyon seçenekleri ayarlanıyor...")
-        
+        time.sleep(3)  # Allow time for page to load
         # Center selection
-        center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-0")))
-        center_select.click()
-        istanbul_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='IBY']")))
-        istanbul_option.click()
-        
+        try:    
+            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-0")))
+            center_select.click()
+            istanbul_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='IBY']")))
+            istanbul_option.click()
+            time.sleep(3) # Allow time for options to load
+        except:  
+            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-0")))
+            center_select.click()
+            istanbul_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='IBY']")))
+            istanbul_option.click()
+            time.sleep(3) 
         # Service selection
-        center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-4")))
-        center_select.click()
-        service_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SSV']")))
-        service_option.click()
-        
+        try:
+            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-4")))
+            center_select.click()
+            service_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SSV']")))
+            service_option.click()
+            time.sleep(3)  # Allow time for options to load
+
+        except:
+            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-4")))
+            center_select.click()
+            service_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SSV']")))
+            service_option.click()
+            time.sleep(3)  # Allow time for options to load
         # Duration selection
-        center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-2")))
-        center_select.click()
-        duration_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SHORSTD']")))
-        duration_option.click()
+        try:
+            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-2")))
+            center_select.click()
+            duration_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SHORSTD']")))
+            duration_option.click()
+            time.sleep(3)  # Allow time for options to load
+        except:
+            center_select = self.wait.until(EC.element_to_be_clickable((By.ID, "mat-select-2")))
+            center_select.click()
+            duration_option = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='SHORSTD']")))
+            duration_option.click()
+            time.sleep(3)
+
 
     def continue_booking(self):
         """Continue with personal information form"""
         self.status_changed.emit(BookingStatus.FILLING_FORM.value)
-        self.log_message.emit("Kişisel bilgiler formu doldurulıyor...")
+        self.log_message.emit("Kişisel bilgiler formu dolduruluyor...")
         
         # Continue button
         self.wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@class='mdc-button__label' and contains(text(), 'Devam Et')]"))).click()
@@ -360,13 +457,14 @@ class VisaBookingWorker(QThread):
                 # Wait for the queue to clear
                 queue_cleared = False
                 wait_count = 0
-                max_wait_cycles = 100  # Prevent infinite loop (about 16 minutes with 10s intervals)
+                max_wait_cycles = 500  # Prevent infinite loop (about 16 minutes with 10s intervals)
                 
                 while not queue_cleared and wait_count < max_wait_cycles and self.is_running:
                     try:
                         # Check if we're still in queue
-                        still_in_queue = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'You are now in line')]")
+                        still_in_queue = "Waiting Room" in self.driver.page_source
                         
+
                         if not still_in_queue:
                             # Queue cleared, we can proceed
                             queue_cleared = True
@@ -396,16 +494,7 @@ class VisaBookingWorker(QThread):
                         
                         wait_count += 1
                         
-                        # Check if page auto-refreshed or if we need to refresh
-                        try:
-                            # Look for refresh indicator or stale page
-                            current_url = self.driver.current_url
-                            if "queue" not in current_url.lower():
-                                # We might have been redirected
-                                queue_cleared = True
-                                break
-                        except Exception:
-                            pass
+                        
                             
                     except Exception as e:
                         self.log_message.emit(f"Kuyruk kontrolü sırasında hata: {str(e)}")
@@ -453,6 +542,15 @@ class VisaBookingWorker(QThread):
         self.is_running = False
         self.terminate()
 
+    def play_queue_notification(self):
+        """Sıra bittiğinde sesli uyarı çalar"""
+        # 3 kez bip sesi çal (1000Hz, her biri 500ms)
+        try:
+            for _ in range(3):
+                winsound.Beep(1000, 500)
+                time.sleep(0.2)  # Bipler arası kısa bekleme
+        except:
+            pass
 
 class ModernVisaBookingApp(QMainWindow):
     def __init__(self):

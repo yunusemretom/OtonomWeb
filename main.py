@@ -10,17 +10,32 @@ from selenium_stealth import stealth
 import pyautogui
 import tkinter as tk
 from tkinter import simpledialog
+import random
 
 options = uc.ChromeOptions()
 options.add_argument("--user-data-dir=chrome-data")
+options.add_argument('--disable-blink-features=AutomationControlled')
+options.add_argument('--disable-extensions')
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-infobars')
+options.add_argument('--disable-dev-shm-usage')
+options.add_argument('--disable-browser-side-navigation')
+options.add_argument('--disable-gpu')
 options.headless = False
 
 driver = uc.Chrome(options=options)
 
 driver.maximize_window()
 wait = WebDriverWait(driver, 20)
+
+# Rastgele bekleme fonksiyonu
+def random_wait(min_time=1, max_time=3):
+    time.sleep(random.uniform(min_time, max_time))
+
+# Sayfaya insan gibi davranarak git
 driver.get("https://visa.vfsglobal.com/tur/tr/fra/login")
-time.sleep(10)
+time.sleep(15)  # Cloudflare yüklemesi için daha uzun bekleme
+
 # Cloudflare Turnstile elementini bul ve tıkla
 
 def get_element_center(element):
@@ -40,30 +55,51 @@ def get_input_dialog(title, prompt):
 def login():
     try:
         cerez = wait.until(EC.presence_of_element_located((By.ID, "onetrust-reject-all-handler")))
-        time.sleep(2)
-        cerez.click()
-        time.sleep(1)
+        random_wait(2, 4)
+        driver.execute_script("arguments[0].click();", cerez)  # JavaScript ile tıklama
+        random_wait()
     except Exception as e:
         pass
+        
     try:
         print("Turnstile elementi bulunuyor...")
+        # İlk olarak iframe'i bulmayı dene
+        try:
+            iframe = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "iframe[title='Widget containing a Cloudflare security challenge']")))
+            driver.switch_to.frame(iframe)
+        except:
+            print("iframe bulunamadı, doğrudan elementi arıyorum...")
+        
         turnstile = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "app-cloudflare-captcha-container")))
-        x, y = get_element_center(turnstile)
-        print(x, y)
-        pyautogui.click(x, y)
+        random_wait(2, 3)
+        
+        # JavaScript ile tıklama dene
+        driver.execute_script("arguments[0].click();", turnstile)
+        
+        # Başarısız olursa mouse ile tıkla
+        if not turnstile.is_selected():
+            x, y = get_element_center(turnstile)
+            print(f"Mouse tıklaması yapılıyor: {x}, {y}")
+            pyautogui.click(x, y)
+            
+        random_wait(3, 5)  # Doğrulama için daha uzun bekleme
+        
+        # Ana frame'e geri dön
+        driver.switch_to.default_content()
+        
     except Exception as e:
         print("Turnstile elementi bulunamadı veya tıklanamadı:", str(e))
 
     username = wait.until(EC.presence_of_element_located((By.ID, "email")))
 
     # Kullanıcı adını al
-    email="***@gmail.com" # Buraya kendi emailinizi yazınız.
+    email="*****@gmail.com" # Buraya kendi emailinizi yazınız.
 
     username.send_keys(email)
     password = wait.until(EC.presence_of_element_located((By.ID, "password")))
 
     # Şifreyi al
-    password_value="********" # Buraya kendi şifrenizi yazınız.
+    password_value="*****" # Buraya kendi şifrenizi yazınız.
 
 
     password.send_keys(password_value)
