@@ -246,7 +246,7 @@ class VisaBookingWorker(QThread):
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.headless = False
         
-        self.driver = uc.Chrome(options=options)
+        self.driver = uc.Chrome()
         self.driver.maximize_window()
         self.wait = WebDriverWait(self.driver, 20)
         
