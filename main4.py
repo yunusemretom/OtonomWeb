@@ -52,10 +52,10 @@ class UserInfo:
     passport_expiry: str = ""
     reference_number: str = ""
     # Visa search settings
-    visa_status: str = "open"
-    visa_location: str = "Istanbul Beyoglu"
-    visa_category: str = "Short Term"
-    visa_type: str = "Short Term Standard"
+    visa_status: str = "closed"  # Büyük/küçük harf duyarsız
+    visa_location: str = "Turkey → France"  # Tam rota
+    visa_category: str = "Short Term"  # Kategori
+    visa_type: str = "Short Term Standard"  # Tip
     check_interval: int = 30  # seconds
     wait_time: int = 180  # seconds
     check_visa_switch: str = "Evet"  # Whether to check visa availability from website
@@ -164,36 +164,74 @@ class VisaBookingWorker(QThread):
             
             # Visa kartlarını bul
             visa_cards = soup.find_all('div', class_='visa-card-container')
+            self.log_message.emit(f"Bulunan visa kartı sayısı: {len(visa_cards)}")
             
             # İstenen kriterlere göre filtrele
-            for card in visa_cards:
-                # Durum kontrolü
+            for i, card in enumerate(visa_cards, 1):
+                self.log_message.emit(f"\nKart {i} kontrol ediliyor...")
+                
+                # Durum kontrolü - büyük/küçük harf duyarsız
                 status = card.select_one('.status-text')
-                if not status or self.user_info.visa_status.lower() not in status.text.lower():
+                if not status:
+                    self.log_message.emit(f"Kart {i}: Durum bilgisi bulunamadı")
+                    continue
+                    
+                status_text = status.text.strip()
+                self.log_message.emit(f"Kart {i} Durum: {status_text}")
+                
+                if self.user_info.visa_status.lower() not in status_text.lower():
+                    self.log_message.emit(f"Kart {i}: Durum eşleşmedi (Aranan: {self.user_info.visa_status}, Bulunan: {status_text})")
                     continue
                 
-                # Konum kontrolü
+                # Konum kontrolü - tam rota
                 country_mission = card.select_one('.country-mission-row')
-                if not country_mission or self.user_info.visa_location.lower() not in country_mission.text.lower():
+                if not country_mission:
+                    self.log_message.emit(f"Kart {i}: Rota bilgisi bulunamadı")
+                    continue
+                    
+                route_text = country_mission.text.strip()
+                self.log_message.emit(f"Kart {i} Rota: {route_text}")
+                
+                if "Turkey → France" not in route_text:
+                    self.log_message.emit(f"Kart {i}: Rota eşleşmedi (Aranan: Turkey → France, Bulunan: {route_text})")
                     continue
                 
-                # Kategori kontrolü
+                # Kategori ve tip kontrolü
                 details = card.select('.visa-details .line')
                 category_match = False
                 type_match = False
                 
+                self.log_message.emit(f"Kart {i} Detaylar:")
                 for detail in details:
-                    text = detail.get_text(strip=True).lower()
-                    if 'category' in text and self.user_info.visa_category.lower() in text:
-                        category_match = True
-                    if 'type' in text and self.user_info.visa_type.lower() in text:
-                        type_match = True
+                    text = detail.get_text(strip=True)
+                    self.log_message.emit(f"  - {text}")
+                    
+                    text_lower = text.lower()
+                    if 'category' in text_lower:
+                        if self.user_info.visa_category.lower() in text_lower:
+                            category_match = True
+                            self.log_message.emit(f"  Kategori eşleşti: {text}")
+                        else:
+                            self.log_message.emit(f"  Kategori eşleşmedi (Aranan: {self.user_info.visa_category}, Bulunan: {text})")
+                            
+                    if 'type' in text_lower:
+                        if self.user_info.visa_type.lower() in text_lower:
+                            type_match = True
+                            self.log_message.emit(f"  Tip eşleşti: {text}")
+                        else:
+                            self.log_message.emit(f"  Tip eşleşmedi (Aranan: {self.user_info.visa_type}, Bulunan: {text})")
                 
                 if category_match and type_match:
-                    self.log_message.emit("Uygun randevu bulundu!")
+                    self.log_message.emit(f"\nUygun randevu bulundu! (Kart {i})")
+                    self.log_message.emit(f"Durum: {status_text}")
+                    self.log_message.emit(f"Rota: {route_text}")
+                    for detail in details:
+                        self.log_message.emit(detail.get_text(strip=True))
                     return True
+                else:
+                    self.log_message.emit(f"Kart {i}: Kategori veya tip eşleşmedi (Kategori: {category_match}, Tip: {type_match})")
             
-            self.log_message.emit("Uygun randevu bulunamadı")
+            self.log_message.emit("\nUygun randevu bulunamadı")
             return False
             
         except Exception as e:
@@ -641,6 +679,12 @@ class VisaBookingWorker(QThread):
                 self.log_message.emit("Sanal kuyrukta bekliyoruz...")
                 self.status_changed.emit("Sanal kuyrukta bekliyor")
                 
+                # Initial refresh when entering queue
+                self.log_message.emit("Kuyruk sayfası yenileniyor...")
+                
+                time.sleep(10)  # Wait for page to reload
+                self.driver.refresh()
+                time.sleep(2)
                 # Extract wait time if available
                 try:
                     wait_time_element = self.driver.find_element(By.XPATH, "//*[contains(text(), 'estimated wait time')]")
@@ -651,6 +695,16 @@ class VisaBookingWorker(QThread):
                     if wait_minutes:
                         wait_time = float(wait_minutes.group(1))
                         self.log_message.emit(f"Tahmini bekleme süresi: {wait_time:.1f} dakika")
+                        
+                        # If wait time is too long (more than 30 minutes), refresh the page
+                        if wait_time > 30:
+                            self.log_message.emit("Bekleme süresi çok uzun, sayfa yenileniyor...")
+                            # Clear cookies
+                            self.driver.delete_all_cookies()
+                            # Refresh the page
+                            self.driver.refresh()
+                            time.sleep(5)  # Wait for page to reload
+                            return  # Exit the method to start fresh
                         
                         # Calculate check intervals based on wait time
                         if wait_time > 10:
@@ -676,7 +730,6 @@ class VisaBookingWorker(QThread):
                         # Check if we're still in queue
                         still_in_queue = "Waiting Room" in self.driver.page_source
                         
-
                         if not still_in_queue:
                             # Queue cleared, we can proceed
                             queue_cleared = True
@@ -706,8 +759,6 @@ class VisaBookingWorker(QThread):
                         
                         wait_count += 1
                         
-                        
-                            
                     except Exception as e:
                         self.log_message.emit(f"Kuyruk kontrolü sırasında hata: {str(e)}")
                         time.sleep(5)

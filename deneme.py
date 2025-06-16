@@ -279,20 +279,20 @@ class VisasBotScraper:
         filtered_cards = []
         
         for card in visa_data:
-            # Durum kontrolü
+            # Durum kontrolü - büyük/küçük harf duyarsız
             if card['status']['text'].lower() != status.lower():
                 continue
                 
-            # Konum kontrolü
+            # Konum kontrolü - kısmi eşleşme
             if location.lower() not in card['country_mission']['text'].lower():
                 continue
                 
-            # Kategori kontrolü
+            # Kategori kontrolü - kısmi eşleşme
             if 'details' in card and 'category' in card['details']:
                 if category.lower() not in card['details']['category'].lower():
                     continue
             
-            # Vize tipi kontrolü
+            # Vize tipi kontrolü - kısmi eşleşme
             if 'details' in card and 'type' in card['details']:
                 if visa_type.lower() not in card['details']['type'].lower():
                     continue
@@ -313,10 +313,10 @@ def main():
         
         if visa_cards:
             # Filtreleme kriterleri
-            status = "open"
-            location = "Istanbul Beyoglu"
-            category = "Short Term / Kisa Donem / Court Sejour"
-            visa_type = "Short Term Standard"
+            status = "closed"  # Büyük/küçük harf duyarsız olacak
+            location = "Turkey → France"  # Tam rota
+            category = "Short Term"  # Tam kategori
+            visa_type = "Short Term Standard"  # Tam tip
             
             # Kartları filtrele
             filtered_cards = scraper.filter_visa_cards(visa_cards, status, location, category, visa_type)
@@ -327,6 +327,10 @@ def main():
             # JSON'a kaydet
             if filtered_cards:
                 scraper.save_to_json(filtered_cards, 'filtered_visa_cards.json')
+            else:
+                print("\nFiltreleme kriterlerine uygun kart bulunamadı.")
+                print("Mevcut kartlar:")
+                scraper.print_summary(visa_cards)
         else:
             print("Hiç visa kartı bulunamadı.")
             
