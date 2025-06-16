@@ -344,7 +344,7 @@ class VisaBookingWorker(QThread):
             sms_input.clear()
             sms_input.send_keys(self.user_input)
             
-            if not self.click_button("Doğrula"):
+            if not self.click_button("Oturum Aç"):
                 self.log_message.emit("SMS kodu girilemedi")
                 self.input_required.emit("Manuel Giriş", "Lütfen kendiniz giriş yapıp onaylayın. Tamam'a bastıktan sonra işlem devam edecektir.")
                 self.input_event = self.wait_for_input()
@@ -685,7 +685,7 @@ class VisaBookingWorker(QThread):
                 time.sleep(10)  # Wait for page to reload
                 self.driver.refresh()
                 time.sleep(2)
-                # Extract wait time if available
+                # Extract wait time if sms
                 try:
                     wait_time_element = self.driver.find_element(By.XPATH, "//*[contains(text(), 'estimated wait time')]")
                     wait_time_text = wait_time_element.text
