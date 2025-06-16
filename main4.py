@@ -58,6 +58,7 @@ class UserInfo:
     visa_type: str = "Short Term Standard"
     check_interval: int = 30  # seconds
     wait_time: int = 180  # seconds
+    check_visa_switch: str = "Evet"  # Whether to check visa availability from website
 
     @classmethod
     def load_from_file(cls):
@@ -99,7 +100,8 @@ class UserInfo:
                 "visa_category": self.visa_category,
                 "visa_type": self.visa_type,
                 "check_interval": self.check_interval,
-                "wait_time": self.wait_time
+                "wait_time": self.wait_time,
+                "check_visa_switch": self.check_visa_switch
             }
             
             with open("user_info.json", "w", encoding="utf-8") as f:
@@ -221,10 +223,14 @@ class VisaBookingWorker(QThread):
         try:
             self.setup_driver()
             
-            # Randevu bulunana kadar bekle
-            if not self.wait_for_available_appointment():
-                self.log_message.emit("İşlem kullanıcı tarafından durduruldu")
-                return
+            # Check visa availability if switch is enabled
+            if self.user_info.check_visa_switch == "Evet":
+                # Randevu bulunana kadar bekle
+                if not self.wait_for_available_appointment():
+                    self.log_message.emit("İşlem kullanıcı tarafından durduruldu")
+                    return
+            else:
+                self.log_message.emit("Web sitesinden vize kontrolü devre dışı, doğrudan işlemlere başlanıyor...")
                 
             self.login_process()
             self.booking_process()
@@ -919,6 +925,11 @@ class ModernVisaBookingApp(QMainWindow):
         self.visa_type_input.setPlaceholderText("Short Term Standard")
         settings_layout.addRow("Vize Tipi:", self.visa_type_input)
         
+        # Add check visa availability switch
+        self.check_visa_switch = QComboBox()
+        self.check_visa_switch.addItems(["Evet", "Hayır"])
+        settings_layout.addRow("Web Sitesinden Vize Kontrolü:", self.check_visa_switch)
+        
         self.check_interval_input = QLineEdit()
         self.check_interval_input.setPlaceholderText("30")
         settings_layout.addRow("Kontrol Aralığı (saniye):", self.check_interval_input)
@@ -1171,6 +1182,7 @@ class ModernVisaBookingApp(QMainWindow):
         self.user_info.visa_location = self.visa_location_input.text() or "Istanbul Beyoglu"
         self.user_info.visa_category = self.visa_category_input.text() or "Short Term"
         self.user_info.visa_type = self.visa_type_input.text() or "Short Term Standard"
+        self.user_info.check_visa_switch = self.check_visa_switch.currentText()
         try:
             self.user_info.check_interval = int(self.check_interval_input.text() or "30")
         except ValueError:
@@ -1268,6 +1280,7 @@ class ModernVisaBookingApp(QMainWindow):
         self.visa_location_input.setText(self.user_info.visa_location)
         self.visa_category_input.setText(self.user_info.visa_category)
         self.visa_type_input.setText(self.user_info.visa_type)
+        self.check_visa_switch.setCurrentText(self.user_info.check_visa_switch)
         self.check_interval_input.setText(str(self.user_info.check_interval))
         self.wait_time_input.setText(str(self.user_info.wait_time))
 
