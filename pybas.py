@@ -34,11 +34,13 @@ async def bilgilendirme(message):
     """
     # Telegram bot konfigürasyonu
     bot_token = "8016284721:AAE1pTh-n1InvD37rIfocdQZRpHuFBFlp4k"
-    chat_id = "1145026697"
+    chat_ids = ["1145026697","1409999374"]
+    
     
     # Bot oluştur ve mesaj gönder
     bot = Bot(token=bot_token)
-    await bot.send_message(chat_id=chat_id, text=message)
+    for chat_id in chat_ids:
+        await bot.send_message(chat_id=chat_id, text=message)
 
 #asyncio.run(mesaj()) 
 
@@ -66,6 +68,88 @@ def load_user_credentials():
         return None
 
 
+def save_user_credentials(credentials):
+    """
+    Kullanıcı bilgilerini user_credentials.json dosyasına kaydeder
+    """
+    try:
+        with open('user_credentials.json', 'w', encoding='utf-8') as f:
+            json.dump(credentials, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"Kullanıcı bilgileri kaydedilirken hata: {e}")
+        return False
+
+
+def deactivate_account_by_email(email):
+    """
+    Verilen e-posta adresine sahip hesabı aktiflikten çıkarır
+    """
+    data = load_user_credentials()
+    if not data or 'accounts' not in data:
+        return False
+    updated = False
+    for acc in data['accounts']:
+        if acc.get('email') == email and acc.get('active', True):
+            acc['active'] = False
+            updated = True
+            break
+    if updated:
+        return save_user_credentials(data)
+    return False
+
+
+def reactivate_all_accounts():
+    """
+    Tüm hesapları tekrar aktif eder
+    """
+    data = load_user_credentials()
+    if not data or 'accounts' not in data:
+        return False
+    for acc in data['accounts']:
+        acc['active'] = True
+    return save_user_credentials(data)
+
+
+def get_account_fail_count(email):
+    """
+    Verilen e-posta için user_credentials.json içindeki fail_count değerini döndürür
+    (yoksa 0 kabul edilir)
+    """
+    data = load_user_credentials()
+    if not data or 'accounts' not in data:
+        return 0
+    for acc in data['accounts']:
+        if acc.get('email') == email:
+            return int(acc.get('fail_count', 0))
+    return 0
+
+
+def set_account_fail_count(email, value):
+    """
+    Verilen e-posta için fail_count değerini ayarlar ve kaydeder
+    """
+    data = load_user_credentials()
+    if not data or 'accounts' not in data:
+        return False
+    for acc in data['accounts']:
+        if acc.get('email') == email:
+            acc['fail_count'] = int(value)
+            return save_user_credentials(data)
+    return False
+
+
+def increment_account_fail_count(email):
+    """
+    Verilen e-posta için fail_count değerini 1 arttırır ve yeni değeri döndürür
+    """
+    current = get_account_fail_count(email)
+    new_value = current + 1
+    print(new_value)
+    set_account_fail_count(email, new_value)
+    return new_value
+
+
 def get_active_accounts(credentials):
     """
     Aktif hesapları filtreler
@@ -80,6 +164,20 @@ def get_active_accounts(credentials):
         return []
     
     return [account for account in credentials['accounts'] if account.get('active', False)]
+
+
+# Hesap deneme sırasını çevirmek için global indeks
+rotation_index = 0
+
+def get_rotated_accounts(accounts):
+    """
+    Global döngü indeksine göre hesap listesini döndürür.
+    Aynı mail, tüm mailler denenmeden tekrar denenmez.
+    """
+    if not accounts:
+        return []
+    idx = rotation_index % len(accounts)
+    return accounts[idx:] + accounts[:idx]
 
 
 def attempt_login_with_account(account, driver, wait):
@@ -139,6 +237,12 @@ def attempt_login_with_account(account, driver, wait):
                     print(f"❌ {account['email']} ile login başarısız: {error_text}")
                 else:
                     print(f"❌ {account['email']} ile login başarısız - Bilinmeyen hata")
+                    # Bilinmeyen hata durumunda maili pasif yap
+                    try:
+                        if deactivate_account_by_email(account['email']):
+                            print(f"❗ {account['email']} aktiflikten çıkarıldı (bilinmeyen hata)")
+                    except Exception:
+                        pass
             except Exception:
                 print(f"❌ {account['email']} ile login başarısız - Hata tespit edilemedi")
             return False
@@ -255,6 +359,7 @@ def main():
     # Login sayfasında mı kontrol et
     if "login" in driver.current_url:
         
+        new_fail = 0
         # =============================================================================
         # LOGIN SAYFASI İŞLEMLERİ
         # =============================================================================
@@ -284,39 +389,32 @@ def main():
         if not credentials:
             print("❌ Kullanıcı bilgileri yüklenemedi, varsayılan hesap kullanılıyor")
             # Varsayılan hesap bilgileri
-            default_account = {
-                "email": "yunusemretom@gmail.com",
-                "password": "78Yunus3!",
-                "description": "Varsayılan hesap"
-            }
-            active_accounts = [default_account]
+            exit()
+        
         else:
             active_accounts = get_active_accounts(credentials)
+            print(active_accounts)
             if not active_accounts:
                 print("❌ Aktif hesap bulunamadı, varsayılan hesap kullanılıyor")
-                default_account = {
-                    "email": "yunusemretom@gmail.com", 
-                    "password": "78Yunus3!",
-                    "description": "Varsayılan hesap"
-                }
-                active_accounts = [default_account]
+                exit()
         
         print(f"📋 {len(active_accounts)} aktif hesap bulundu")
         
-        # Her hesap ile login denemesi
+        # Her hesap ile login denemesi (rotasyonlu sıra) - başarısızsa tek denemede pasife al
         login_successful = False
         successful_account = None
-        
-        for i, account in enumerate(active_accounts):
-            print(f"\n🔄 Hesap {i+1}/{len(active_accounts)} deneniyor...")
-            
+
+        accounts_to_try = get_rotated_accounts(active_accounts)
+        for i, account in enumerate(accounts_to_try):
+            print(f"\n🔄 Hesap {i+1}/{len(accounts_to_try)} deneniyor...")
+
             try:
-                # Sayfayı yenile (önceki deneme varsa)
+                # Sayfayı tazeleyip tek deneme yap
                 if i > 0:
                     print("🔄 Login sayfası yeniden açılıyor...")
                     driver.get(url)
                     time.sleep(3)
-                    
+
                     # Cookie onayını reddet (varsa)
                     try:
                         cookie_reject = wait.until(EC.presence_of_element_located((By.ID, "onetrust-reject-all-handler")))
@@ -325,29 +423,37 @@ def main():
                         print("Cookie onayı reddedildi")
                     except Exception:
                         pass
-                    
+
                     time.sleep(1)
                     # Cloudflare/Turnstile captcha kontrolü
                     try:
                         driver.uc_gui_click_captcha()
                     except Exception:
                         pass
-                
-                # Login denemesi
+
+                print(f"🧪 {account['email']} için tek deneme başlıyor")
                 if attempt_login_with_account(account, driver, wait):
                     login_successful = True
                     successful_account = account
                     print(f"✅ {account['email']} ile login başarılı!")
                     break
                 else:
-                    print(f"❌ {account['email']} ile login başarısız")
-                    
-                    # Hesap değiştirme gecikmesi
-                    if i < len(active_accounts) - 1:  # Son hesap değilse
-                        delay = credentials.get('settings', {}).get('account_switch_delay', 5) if credentials else 5
-                        print(f"⏳ Sonraki hesap için {delay} saniye bekleniyor...")
-                        time.sleep(delay)
-                        
+                    print(f"❌ {account['email']} ile login başarısız - hesap pasife alınacak")
+                    try:
+                        if deactivate_account_by_email(account['email']):
+                            print(f"❗ {account['email']} aktiflikten çıkarıldı")
+                    except Exception:
+                        pass
+
+                # Kalan aktif hesap var mı kontrol et; yoksa hepsini yeniden aktif et ve turu yeniden başlat
+                latest = load_user_credentials()
+                remaining_active = get_active_accounts(latest) if latest else []
+                if not remaining_active:
+                    print("🔁 Tüm mailler pasif; hepsi yeniden aktif ediliyor ve döngü baştan başlayacak")
+                    if reactivate_all_accounts():
+                        print("✅ Tüm mailler yeniden aktif edildi")
+                    return
+
             except Exception as e:
                 print(f"❌ {account['email']} ile login sırasında beklenmeyen hata: {e}")
                 if credentials and credentials.get('settings', {}).get('error_screenshot', True):
@@ -359,7 +465,6 @@ def main():
             print("❌ Tüm hesaplar ile login başarısız!")
             driver.save_screenshot("all_login_failed.png")
             asyncio.run(bilgilendirme("❌ Tüm hesaplar ile login başarısız!"))
-            driver.quit()
             raise Exception("Tüm hesaplar ile login başarısız")
         
         print(f"🎉 Başarılı login: {successful_account['email']}")
@@ -375,19 +480,44 @@ def main():
             
             otp_code = None
             
-            # E-posta OTP'sini otomatik olarak almaya çalış
+            # E-posta OTP'sini otomatik olarak almaya çalış (2 deneme)
             if get_mail and extract_otp_from_email:
                 try:
-                    otp_code = extract_otp_from_email(get_mail(username="burakcaann5@gmail.com",password="fgvp jlxe btrl ekqg",imap_server="imap.gmail.com"))
-                    print(f"✅ OTP kodu e-postadan alındı ({successful_account['email']})")
+                    otp_code = extract_otp_from_email(
+                        get_mail(username="burakcaann5@gmail.com", password="fgvp jlxe btrl ekqg", imap_server="imap.gmail.com")
+                    )
+                    if otp_code:
+                        print(f"✅ OTP kodu e-postadan alındı ({successful_account['email']})")
                 except Exception:
                     otp_code = None
-                    print(f"❌ E-postadan OTP alınamadı ({successful_account['email']})")
-            
-            # Otomatik OTP alınamazsa kullanıcıdan iste
+                    print(f"❌ E-postadan OTP alınamadı (ilk deneme) ({successful_account['email']})")
+                
+                if not otp_code:
+                    time.sleep(12)
+                    try:
+                        otp_code = extract_otp_from_email(
+                            get_mail(username="burakcaann5@gmail.com", password="fgvp jlxe btrl ekqg", imap_server="imap.gmail.com")
+                        )
+                        if otp_code:
+                            print(f"✅ OTP kodu e-postadan alındı (2. deneme) ({successful_account['email']})")
+                    except Exception:
+                        otp_code = None
+                        print(f"❌ E-postadan OTP alınamadı (2. deneme) ({successful_account['email']})")
+
+            # Hâlâ yoksa hesabı pasif yap ve döngüyü bitir
             if not otp_code:
-                otp_code = get_input_dialog("Mail Kodu", f"Lütfen {successful_account['email']} için Mail kodunu girin: ")
-                print(f"✅ OTP kodu kullanıcıdan alındı ({successful_account['email']})")
+                try:
+                    if deactivate_account_by_email(successful_account['email']):
+                        print(f"❗ {successful_account['email']} aktiflikten çıkarıldı (OTP gelmedi)")
+                except Exception:
+                    pass
+                latest = load_user_credentials()
+                remaining_active = get_active_accounts(latest) if latest else []
+                if not remaining_active:
+                    print("🔁 Tüm mailler pasifti; hepsi yeniden aktif ediliyor")
+                    if reactivate_all_accounts():
+                        print("✅ Tüm mailler yeniden aktif edildi")
+                return
             
             # OTP kodunu gir
             otp_input.send_keys(otp_code)
@@ -451,20 +581,21 @@ def main():
             
             print(f"📋 {len(active_accounts)} aktif hesap ile yeniden deneme yapılıyor")
             
-            # Her hesap ile login denemesi
+            # Her hesap ile login denemesi (rotasyonlu sıra) - başarısızsa tek denemede pasife al
             login_successful = False
             successful_account = None
-            
-            for i, account in enumerate(active_accounts):
-                print(f"\n🔄 Hesap {i+1}/{len(active_accounts)} deneniyor...")
-                
+
+            accounts_to_try = get_rotated_accounts(active_accounts)
+            for i, account in enumerate(accounts_to_try):
+                print(f"\n🔄 Hesap {i+1}/{len(accounts_to_try)} deneniyor...")
+
                 try:
-                    # Sayfayı yenile (önceki deneme varsa)
+                    # Sayfayı tazeleyip tek deneme yap
                     if i > 0:
                         print("🔄 Login sayfası yeniden açılıyor...")
                         driver.get(url)
                         time.sleep(3)
-                        
+
                         # Cookie onayını reddet (varsa)
                         try:
                             cookie_reject = wait.until(EC.presence_of_element_located((By.ID, "onetrust-reject-all-handler")))
@@ -473,29 +604,37 @@ def main():
                             print("Cookie onayı reddedildi")
                         except Exception:
                             pass
-                        
+
                         time.sleep(1)
                         # Cloudflare/Turnstile captcha kontrolü
                         try:
                             driver.uc_gui_click_captcha()
                         except Exception:
                             pass
-                    
-                    # Login denemesi
+
+                    print(f"🧪 {account['email']} için tek deneme başlıyor")
                     if attempt_login_with_account(account, driver, wait):
                         login_successful = True
                         successful_account = account
                         print(f"✅ {account['email']} ile login başarılı!")
                         break
                     else:
-                        print(f"❌ {account['email']} ile login başarısız")
-                        
-                        # Hesap değiştirme gecikmesi
-                        if i < len(active_accounts) - 1:  # Son hesap değilse
-                            delay = credentials.get('settings', {}).get('account_switch_delay', 5) if credentials else 5
-                            print(f"⏳ Sonraki hesap için {delay} saniye bekleniyor...")
-                            time.sleep(delay)
-                            
+                        print(f"❌ {account['email']} ile login başarısız - hesap pasife alınacak")
+                        try:
+                            if deactivate_account_by_email(account['email']):
+                                print(f"❗ {account['email']} aktiflikten çıkarıldı")
+                        except Exception:
+                            pass
+
+                    # Kalan aktif hesap var mı kontrol et; yoksa hepsini yeniden aktif et ve turu yeniden başlat
+                    latest = load_user_credentials()
+                    remaining_active = get_active_accounts(latest) if latest else []
+                    if not remaining_active:
+                        print("🔁 Tüm mailler pasif; hepsi yeniden aktif ediliyor ve döngü baştan başlayacak")
+                        if reactivate_all_accounts():
+                            print("✅ Tüm mailler yeniden aktif edildi")
+                        return
+
                 except Exception as e:
                     print(f"❌ {account['email']} ile login sırasında beklenmeyen hata: {e}")
                     if credentials and credentials.get('settings', {}).get('error_screenshot', True):
@@ -506,8 +645,7 @@ def main():
             if not login_successful:
                 print("❌ Tüm hesaplar ile login başarısız!")
                 driver.save_screenshot("all_login_failed.png")
-                asyncio.run(bilgilendirme("❌ Tüm hesaplar ile login başarısız!"))
-                driver.quit()
+                asyncio.run(bilgilendirme("❌ Tüm hesaplar ile login başarısız!"))  
                 raise Exception("Tüm hesaplar ile login başarısız")
             
             print(f"🎉 Başarılı login: {successful_account['email']}")
@@ -520,19 +658,44 @@ def main():
                 
                 otp_code = None
                 
-                # E-posta OTP'sini otomatik olarak almaya çalış
+                # E-posta OTP'sini otomatik olarak almaya çalış (2 deneme)
                 if get_mail and extract_otp_from_email:
                     try:
-                        otp_code = extract_otp_from_email(get_mail(username="yunusemretom@gmail.com",password="hrua lyrh orka qlvt",imap_server="imap.gmail.com"))
-                        print(f"✅ OTP kodu e-postadan alındı ({successful_account['email']})")
+                        otp_code = extract_otp_from_email(
+                            get_mail(username="yunusemretom@gmail.com", password="hrua lyrh orka qlvt", imap_server="imap.gmail.com")
+                        )
+                        if otp_code:
+                            print(f"✅ OTP kodu e-postadan alındı ({successful_account['email']})")
                     except Exception:
                         otp_code = None
-                        print(f"❌ E-postadan OTP alınamadı ({successful_account['email']})")
-                
-                # Otomatik OTP alınamazsa kullanıcıdan iste
+                        print(f"❌ E-postadan OTP alınamadı (ilk deneme) ({successful_account['email']})")
+                    
+                    if not otp_code:
+                        time.sleep(12)
+                        try:
+                            otp_code = extract_otp_from_email(
+                                get_mail(username="yunusemretom@gmail.com", password="hrua lyrh orka qlvt", imap_server="imap.gmail.com")
+                            )
+                            if otp_code:
+                                print(f"✅ OTP kodu e-postadan alındı (2. deneme) ({successful_account['email']})")
+                        except Exception:
+                            otp_code = None
+                            print(f"❌ E-postadan OTP alınamadı (2. deneme) ({successful_account['email']})")
+
+                # Hâlâ yoksa hesabı pasif yap ve döngüyü bitir
                 if not otp_code:
-                    otp_code = get_input_dialog("Mail Kodu", f"Lütfen {successful_account['email']} için Mail kodunu girin: ")
-                    print(f"✅ OTP kodu kullanıcıdan alındı ({successful_account['email']})")
+                    try:
+                        if deactivate_account_by_email(successful_account['email']):
+                            print(f"❗ {successful_account['email']} aktiflikten çıkarıldı (OTP gelmedi)")
+                    except Exception:
+                        pass
+                    latest = load_user_credentials()
+                    remaining_active = get_active_accounts(latest) if latest else []
+                    if not remaining_active:
+                        print("🔁 Tüm mailler pasifti; hepsi yeniden aktif ediliyor")
+                        if reactivate_all_accounts():
+                            print("✅ Tüm mailler yeniden aktif edildi")
+                    return
                 
                 # OTP kodunu gir
                 otp_input.send_keys(otp_code)
@@ -551,8 +714,41 @@ def main():
             print(f"❌ Dashboard kontrolü sırasında hata: {e}")
             asyncio.run(bilgilendirme(f"❌ Dashboard kontrolü sırasında hata: {str(e)}"))
             raise e
+    
     time.sleep(6)  # Login işlemi sonrası bekleme
     
+    if "page-not-found" in driver.current_url:
+        print("mail aktif değil diğer maile geç")
+        # Mevcut başarılı hesap varsa onu pasif yap, yoksa son deneneni pasif yap
+        try:
+            current_email = successful_account['email'] if 'successful_account' in locals() and successful_account else None
+        except Exception:
+            current_email = None
+        if not current_email:
+            # İlk rotasyon listesindeki sıradaki hesabı tahmini olarak pasif yapma fallback'i
+            try:
+                current_email = accounts_to_try[i]['email']  # mevcut döngü kapsamı
+            except Exception:
+                current_email = None
+        if current_email:
+            deactivated = deactivate_account_by_email(current_email)
+            if deactivated:
+                print(f"❗ {current_email} aktiflikten çıkarıldı")
+            else:
+                print(f"⚠️ {current_email} aktiflikten çıkarılamadı")
+        
+        # Aktif hesap kaldı mı kontrol et; yoksa hepsini tekrar aktif et
+        latest = load_user_credentials()
+        remaining_active = get_active_accounts(latest) if latest else []
+        if not remaining_active:
+            print("🔁 Tüm mailler pasifti; hepsi yeniden aktif ediliyor")
+            if reactivate_all_accounts():
+                print("✅ Tüm mailler yeniden aktif edildi")
+            else:
+                print("⚠️ Mailler yeniden aktif edilemedi")
+        
+        # Bu döngüyü bitir ve bir sonrakinde rotasyon ilerlesin
+        return
     # =============================================================================
     # YENİ REZERVASYON BAŞLATMA
     # =============================================================================
@@ -665,6 +861,8 @@ def main():
 
     # =============================================================================
     # RANDEVU DURUMU KONTROLÜ
+
+    
     # =============================================================================
     
     print("Randevu durumu kontrol ediliyor...")
@@ -676,6 +874,32 @@ def main():
             print("❌ Randevu bulunamadı.")
             # Telegram bildirimi gönder
             asyncio.run(bilgilendirme("❌ Randevu bulunamadı."))
+            # Başarılı giriş yapılan hesabı bul ve fail counter'ı arttır
+
+            try:
+                current_email = successful_account['email'] if 'successful_account' in locals() and successful_account else None
+            except Exception:
+                current_email = None
+            # Fallback: döngü kapsamındaki son denenmiş hesabın e-postası
+            if not current_email:
+                try:
+                    current_email = accounts_to_try[i]['email']
+                except Exception:
+                    current_email = None
+
+            if current_email:
+                new_fail = increment_account_fail_count(current_email)
+                print(f"⚠️ {current_email} için randevu bulunamadı sayaçı: {new_fail}")
+                # 5'e ulaştıysa hesabı pasif yap ve bildir
+                if new_fail >= 5:
+                    if deactivate_account_by_email(current_email):
+                        print(f"❗ {current_email} 5 kez randevu bulunamadığı için pasife alındı")
+                        asyncio.run(bilgilendirme(f"❗ {current_email} 5 kez randevu bulunamadığı için pasife alındı. Diğer hesaba geçiliyor."))
+                        driver.get("https://visa.vfsglobal.com/tur/tr/fra/login")
+                    else:
+                        print(f"⚠️ {current_email} pasife alınamadı")
+            else:
+                print("⚠️ Geçerli hesap e-postası bulunamadı; sayaç artırılamadı")
         else:
             print(f"✅ Randevu bulundu: {mesaj}")
             # Telegram bildirimi gönder
@@ -685,6 +909,14 @@ def main():
                                         🎯 Ülke: Fransa
                                         📄 Kategori: Tourism - Short Term Standard
                                         📅 Slotlar: {mesaj}"""))
+            # Randevu bulunduğunda sayaç sıfırlanır
+            try:
+                current_email = successful_account['email'] if 'successful_account' in locals() and successful_account else None
+            except Exception:
+                current_email = None
+            if current_email:
+                set_account_fail_count(current_email, 0)
+                print(f"🔄 {current_email} için randevu başarısında sayaç sıfırlandı")
             
     except Exception as e:
         print(f"Randevu durumu kontrol edilemedi: {e}")
@@ -733,6 +965,9 @@ while True:
     try:
         main()
         print(f"✅ Döngü {i} tamamlandı")
+        # Bir sonraki döngüde ilk denenecek hesabı ilerlet
+        if 'active_accounts' in globals() and active_accounts:
+            rotation_index = (rotation_index + 1) % len(active_accounts)
         
     except Exception as e:
         print(f"❌ Döngü {i} sırasında hata: {e}")
