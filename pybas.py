@@ -111,6 +111,18 @@ def reactivate_all_accounts():
     return save_user_credentials(data)
 
 
+def reset_all_fail_counts():
+    """
+    Tüm hesapların fail_count değerlerini sıfırlar
+    """
+    data = load_user_credentials()
+    if not data or 'accounts' not in data:
+        return False
+    for acc in data['accounts']:
+        acc['fail_count'] = 0
+    return save_user_credentials(data)
+
+
 def get_account_fail_count(email):
     """
     Verilen e-posta için user_credentials.json içindeki fail_count değerini döndürür
@@ -168,6 +180,7 @@ def get_active_accounts(credentials):
 
 # Hesap deneme sırasını çevirmek için global indeks
 rotation_index = 0
+current_logged_in_email = None
 
 def get_rotated_accounts(accounts):
     """
@@ -395,8 +408,12 @@ def main():
             active_accounts = get_active_accounts(credentials)
             print(active_accounts)
             if not active_accounts:
-                print("❌ Aktif hesap bulunamadı, varsayılan hesap kullanılıyor")
-                exit()
+                print("❌ Aktif hesap bulunamadı, tüm hesaplar aktif ediliyor...")
+                reactivate_all_accounts()
+                active_accounts = get_active_accounts(credentials)
+                if not active_accounts:
+                    print("❌ Hala aktif hesap bulunamadı, çıkış yapılıyor")
+                    exit()
         
         print(f"📋 {len(active_accounts)} aktif hesap bulundu")
         
@@ -452,6 +469,8 @@ def main():
                     print("🔁 Tüm mailler pasif; hepsi yeniden aktif ediliyor ve döngü baştan başlayacak")
                     if reactivate_all_accounts():
                         print("✅ Tüm mailler yeniden aktif edildi")
+                    if reset_all_fail_counts():
+                        print("🔄 Tüm fail_count değerleri sıfırlandı")
                     return
 
             except Exception as e:
@@ -468,6 +487,11 @@ def main():
             raise Exception("Tüm hesaplar ile login başarısız")
         
         print(f"🎉 Başarılı login: {successful_account['email']}")
+        # Oturum açılan hesabın e-postasını global değişkende sakla
+        try:
+            globals()['current_logged_in_email'] = successful_account['email']
+        except Exception:
+            pass
         asyncio.run(bilgilendirme(f"✅ Login başarılı: {successful_account['email']}"))
             
         # =============================================================================
@@ -517,6 +541,8 @@ def main():
                     print("🔁 Tüm mailler pasifti; hepsi yeniden aktif ediliyor")
                     if reactivate_all_accounts():
                         print("✅ Tüm mailler yeniden aktif edildi")
+                    if reset_all_fail_counts():
+                        print("🔄 Tüm fail_count değerleri sıfırlandı")
                 return
             
             # OTP kodunu gir
@@ -633,6 +659,8 @@ def main():
                         print("🔁 Tüm mailler pasif; hepsi yeniden aktif ediliyor ve döngü baştan başlayacak")
                         if reactivate_all_accounts():
                             print("✅ Tüm mailler yeniden aktif edildi")
+                        if reset_all_fail_counts():
+                            print("🔄 Tüm fail_count değerleri sıfırlandı")
                         return
 
                 except Exception as e:
@@ -649,6 +677,11 @@ def main():
                 raise Exception("Tüm hesaplar ile login başarısız")
             
             print(f"🎉 Başarılı login: {successful_account['email']}")
+            # Oturum açılan hesabın e-postasını global değişkende sakla
+            try:
+                globals()['current_logged_in_email'] = successful_account['email']
+            except Exception:
+                pass
             asyncio.run(bilgilendirme(f"✅ Login başarılı: {successful_account['email']}"))
             
             # OTP işlemleri
@@ -695,6 +728,8 @@ def main():
                         print("🔁 Tüm mailler pasifti; hepsi yeniden aktif ediliyor")
                         if reactivate_all_accounts():
                             print("✅ Tüm mailler yeniden aktif edildi")
+                        if reset_all_fail_counts():
+                            print("🔄 Tüm fail_count değerleri sıfırlandı")
                     return
                 
                 # OTP kodunu gir
@@ -744,6 +779,8 @@ def main():
             print("🔁 Tüm mailler pasifti; hepsi yeniden aktif ediliyor")
             if reactivate_all_accounts():
                 print("✅ Tüm mailler yeniden aktif edildi")
+            if reset_all_fail_counts():
+                print("🔄 Tüm fail_count değerleri sıfırlandı")
             else:
                 print("⚠️ Mailler yeniden aktif edilemedi")
         
@@ -876,16 +913,11 @@ def main():
             asyncio.run(bilgilendirme("❌ Randevu bulunamadı."))
             # Başarılı giriş yapılan hesabı bul ve fail counter'ı arttır
 
+            # Randevu kontrolü sırasında her zaman oturum açmış hesabın e-postası kullanılacak
             try:
-                current_email = successful_account['email'] if 'successful_account' in locals() and successful_account else None
+                current_email = globals().get('current_logged_in_email')
             except Exception:
                 current_email = None
-            # Fallback: döngü kapsamındaki son denenmiş hesabın e-postası
-            if not current_email:
-                try:
-                    current_email = accounts_to_try[i]['email']
-                except Exception:
-                    current_email = None
 
             if current_email:
                 new_fail = increment_account_fail_count(current_email)
@@ -911,7 +943,7 @@ def main():
                                         📅 Slotlar: {mesaj}"""))
             # Randevu bulunduğunda sayaç sıfırlanır
             try:
-                current_email = successful_account['email'] if 'successful_account' in locals() and successful_account else None
+                current_email = globals().get('current_logged_in_email')
             except Exception:
                 current_email = None
             if current_email:

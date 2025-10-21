@@ -28,7 +28,7 @@ def get_local_version(file_path="version.txt"):
         return None
 
 def download_latest():
-    download_url = "https://raw.githubusercontent.com/yunusemretom/OtonomWeb/main/main4.py"
+    download_url = "https://raw.githubusercontent.com/yunusemretom/OtonomWeb/main/pybas.py"
     
     r = requests.get(download_url)
     with open("main.py", "w", encoding="utf-8") as f:
